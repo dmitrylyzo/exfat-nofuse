@@ -161,8 +161,8 @@ void exfat_time_fat2unix(struct exfat_sb_info *sbi, struct timespec *ts,
 	ts->tv_sec =  tp->Second  + tp->Minute * SECS_PER_MIN
 				  + tp->Hour * SECS_PER_HOUR
 				  + (year * 365 + ld + accum_days_in_year[(tp->Month)] + (tp->Day - 1) + DAYS_DELTA_DECADE) * SECS_PER_DAY
-				  + sys_tz.tz_minuteswest * SECS_PER_MIN;
-	ts->tv_nsec = 0;
+				  - tp->TZminute * SECS_PER_MIN;
+	ts->tv_nsec = (long)tp->MilliSecond * 1000000;
 }
 
 /* Convert linear UNIX date to a FAT time/date pair. */
@@ -173,10 +173,13 @@ void exfat_time_unix2fat(struct exfat_sb_info *sbi, struct timespec *ts,
 	time_t day, month, year;
 	time_t ld;
 
-	second -= sys_tz.tz_minuteswest * SECS_PER_MIN;
+	tp->TZminute = -sys_tz.tz_minuteswest;
+
+	second += tp->TZminute * SECS_PER_MIN;
 
 	/* Jan 1 GMT 00:00:00 1980. But what about another time zone? */
 	if (second < UNIX_SECS_1980) {
+		tp->MilliSecond = 0;
 		tp->Second  = 0;
 		tp->Minute  = 0;
 		tp->Hour = 0;
@@ -187,6 +190,7 @@ void exfat_time_unix2fat(struct exfat_sb_info *sbi, struct timespec *ts,
 	}
 #if (BITS_PER_LONG == 64)
 	if (second >= UNIX_SECS_2108) {
+		tp->MilliSecond = 999;
 		tp->Second  = 59;
 		tp->Minute  = 59;
 		tp->Hour = 23;
@@ -217,6 +221,7 @@ void exfat_time_unix2fat(struct exfat_sb_info *sbi, struct timespec *ts,
 	}
 	day -= accum_days_in_year[month];
 
+	tp->MilliSecond = ts->tv_nsec / 1000000;
 	tp->Second  = second % SECS_PER_MIN;
 	tp->Minute  = (second / SECS_PER_MIN) % 60;
 	tp->Hour = (second / SECS_PER_HOUR) % 24;
@@ -2493,6 +2498,7 @@ static int exfat_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_magic = EXFAT_SUPER_MAGIC;
 	sb->s_op = &exfat_sops;
 	sb->s_export_op = &exfat_export_ops;
+	sb->s_time_gran = 10000000; /* 10ms time granularity */
 
 	error = parse_options(data, silent, &debug, &sbi->options);
 	if (error)

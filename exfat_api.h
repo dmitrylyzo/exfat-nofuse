@@ -109,6 +109,7 @@ typedef struct {
 	u16      Minute;
 	u16      Second;
 	u16      MilliSecond;
+	int16_t  TZminute;
 } DATE_TIME_T;
 
 typedef struct {

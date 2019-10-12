@@ -132,16 +132,20 @@ TIMESTAMP_T *tm_current(TIMESTAMP_T *tp)
 	time_t second, day, leap_day, month, year;
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4,8,0)
-	ts = CURRENT_TIME_SEC;
+	ts = CURRENT_TIME;
 #else
 	ktime_get_real_ts(&ts);
 #endif
 
 	second = ts.tv_sec;
-	second -= sys_tz.tz_minuteswest * SECS_PER_MIN;
+
+	tp->tzmin = -sys_tz.tz_minuteswest;
+
+	second += tp->tzmin * SECS_PER_MIN;
 
 	/* Jan 1 GMT 00:00:00 1980. But what about another time zone? */
 	if (second < UNIX_SECS_1980) {
+		tp->msec = 0;
 		tp->sec  = 0;
 		tp->min  = 0;
 		tp->hour = 0;
@@ -152,6 +156,7 @@ TIMESTAMP_T *tm_current(TIMESTAMP_T *tp)
 	}
 #if BITS_PER_LONG == 64
 	if (second >= UNIX_SECS_2108) {
+		tp->msec = 999;
 		tp->sec  = 59;
 		tp->min  = 59;
 		tp->hour = 23;
@@ -185,6 +190,7 @@ TIMESTAMP_T *tm_current(TIMESTAMP_T *tp)
 	}
 	day -= accum_days_in_year[month];
 
+	tp->msec = ts.tv_nsec / 1000000;
 	tp->sec  = second % SECS_PER_MIN;
 	tp->min  = (second / SECS_PER_MIN) % 60;
 	tp->hour = (second / SECS_PER_HOUR) % 24;

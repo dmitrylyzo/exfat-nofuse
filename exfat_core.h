@@ -356,8 +356,10 @@ typedef struct {
 	u8       access_date[2];
 	u8       create_time_ms;
 	u8       modify_time_ms;
-	u8       access_time_ms;
-	u8       reserved2[9];
+	u8       create_offset_15min;
+	u8       modify_offset_15min;
+	u8       access_offset_15min;
+	u8       reserved2[7];
 } FILE_DENTRY_T;
 
 /* MS-DOS EXFAT stream extension directory entry (32 bytes) */

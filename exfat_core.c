@@ -1159,7 +1159,8 @@ s32 ffsGetStat(struct inode *inode, DIR_ENTRY_T *info)
 	info->CreateTimestamp.Hour = tm.hour;
 	info->CreateTimestamp.Minute = tm.min;
 	info->CreateTimestamp.Second = tm.sec;
-	info->CreateTimestamp.MilliSecond = 0;
+	info->CreateTimestamp.MilliSecond = tm.msec;
+	info->CreateTimestamp.TZminute = tm.tzmin;
 
 	p_fs->fs_func->get_entry_time(ep, &tm, TM_MODIFY);
 	info->ModifyTimestamp.Year = tm.year;
@@ -1168,7 +1169,8 @@ s32 ffsGetStat(struct inode *inode, DIR_ENTRY_T *info)
 	info->ModifyTimestamp.Hour = tm.hour;
 	info->ModifyTimestamp.Minute = tm.min;
 	info->ModifyTimestamp.Second = tm.sec;
-	info->ModifyTimestamp.MilliSecond = 0;
+	info->ModifyTimestamp.MilliSecond = tm.msec;
+	info->ModifyTimestamp.TZminute = tm.tzmin;
 
 	memset((char *) &info->AccessTimestamp, 0, sizeof(DATE_TIME_T));
 
@@ -1255,6 +1257,8 @@ s32 ffsSetStat(struct inode *inode, DIR_ENTRY_T *info)
 	p_fs->fs_func->set_entry_attr(ep, info->Attr);
 
 	/* set FILE_INFO structure using the acquired DENTRY_T */
+	tm.tzmin = info->CreateTimestamp.TZminute;
+	tm.msec = info->CreateTimestamp.MilliSecond;
 	tm.sec  = info->CreateTimestamp.Second;
 	tm.min  = info->CreateTimestamp.Minute;
 	tm.hour = info->CreateTimestamp.Hour;
@@ -1263,6 +1267,8 @@ s32 ffsSetStat(struct inode *inode, DIR_ENTRY_T *info)
 	tm.year = info->CreateTimestamp.Year;
 	p_fs->fs_func->set_entry_time(ep, &tm, TM_CREATE);
 
+	tm.tzmin = info->ModifyTimestamp.TZminute;
+	tm.msec = info->ModifyTimestamp.MilliSecond;
 	tm.sec  = info->ModifyTimestamp.Second;
 	tm.min  = info->ModifyTimestamp.Minute;
 	tm.hour = info->ModifyTimestamp.Hour;
@@ -1548,7 +1554,8 @@ s32 ffsReadDir(struct inode *inode, DIR_ENTRY_T *dir_entry)
 			dir_entry->CreateTimestamp.Hour = tm.hour;
 			dir_entry->CreateTimestamp.Minute = tm.min;
 			dir_entry->CreateTimestamp.Second = tm.sec;
-			dir_entry->CreateTimestamp.MilliSecond = 0;
+			dir_entry->CreateTimestamp.MilliSecond = tm.msec;
+			dir_entry->CreateTimestamp.TZminute = tm.tzmin;
 
 			p_fs->fs_func->get_entry_time(ep, &tm, TM_MODIFY);
 			dir_entry->ModifyTimestamp.Year = tm.year;
@@ -1557,7 +1564,8 @@ s32 ffsReadDir(struct inode *inode, DIR_ENTRY_T *dir_entry)
 			dir_entry->ModifyTimestamp.Hour = tm.hour;
 			dir_entry->ModifyTimestamp.Minute = tm.min;
 			dir_entry->ModifyTimestamp.Second = tm.sec;
-			dir_entry->ModifyTimestamp.MilliSecond = 0;
+			dir_entry->ModifyTimestamp.MilliSecond = tm.msec;
+			dir_entry->ModifyTimestamp.TZminute = tm.tzmin;
 
 			memset((char *) &dir_entry->AccessTimestamp, 0, sizeof(DATE_TIME_T));
 
@@ -2739,12 +2747,14 @@ void exfat_set_entry_size(DENTRY_T *p_entry, u64 size)
 void fat_get_entry_time(DENTRY_T *p_entry, TIMESTAMP_T *tp, u8 mode)
 {
 	u16 t = 0x00, d = 0x21;
+	u8 ms = 0;
 	DOS_DENTRY_T *ep = (DOS_DENTRY_T *) p_entry;
 
 	switch (mode) {
 	case TM_CREATE:
 		t = GET16_A(ep->create_time);
 		d = GET16_A(ep->create_date);
+		ms = ep->create_time_ms;
 		break;
 	case TM_MODIFY:
 		t = GET16_A(ep->modify_time);
@@ -2752,7 +2762,9 @@ void fat_get_entry_time(DENTRY_T *p_entry, TIMESTAMP_T *tp, u8 mode)
 		break;
 	}
 
-	tp->sec  = (t & 0x001F) << 1;
+	tp->tzmin = -sys_tz.tz_minuteswest;
+	tp->msec = (ms % 100) * 10;
+	tp->sec  = ((t & 0x001F) << 1) + (ms / 100);
 	tp->min  = (t >> 5) & 0x003F;
 	tp->hour = (t >> 11);
 	tp->day  = (d & 0x001F);
@@ -2763,24 +2775,37 @@ void fat_get_entry_time(DENTRY_T *p_entry, TIMESTAMP_T *tp, u8 mode)
 void exfat_get_entry_time(DENTRY_T *p_entry, TIMESTAMP_T *tp, u8 mode)
 {
 	u16 t = 0x00, d = 0x21;
+	u8 ms = 0;
+	u8 tzmin = 0;
 	FILE_DENTRY_T *ep = (FILE_DENTRY_T *) p_entry;
 
 	switch (mode) {
 	case TM_CREATE:
 		t = GET16_A(ep->create_time);
 		d = GET16_A(ep->create_date);
+		ms = ep->create_time_ms;
+		tzmin = ep->create_offset_15min;
 		break;
 	case TM_MODIFY:
 		t = GET16_A(ep->modify_time);
 		d = GET16_A(ep->modify_date);
+		ms = ep->modify_time_ms;
+		tzmin = ep->modify_offset_15min;
 		break;
 	case TM_ACCESS:
 		t = GET16_A(ep->access_time);
 		d = GET16_A(ep->access_date);
+		tzmin = ep->access_offset_15min;
 		break;
 	}
 
-	tp->sec  = (t & 0x001F) << 1;
+	if (tzmin & 0x80)
+		tp->tzmin = (int8_t)(tzmin << 1) / 2 * 15;
+	else
+		tp->tzmin = -sys_tz.tz_minuteswest;
+
+	tp->msec = (ms % 100) * 10;
+	tp->sec  = ((t & 0x001F) << 1) + (ms / 100);
 	tp->min  = (t >> 5) & 0x003F;
 	tp->hour = (t >> 11);
 	tp->day  = (d & 0x001F);
@@ -2791,15 +2816,18 @@ void exfat_get_entry_time(DENTRY_T *p_entry, TIMESTAMP_T *tp, u8 mode)
 void fat_set_entry_time(DENTRY_T *p_entry, TIMESTAMP_T *tp, u8 mode)
 {
 	u16 t, d;
+	u8 ms;
 	DOS_DENTRY_T *ep = (DOS_DENTRY_T *) p_entry;
 
 	t = (tp->hour << 11) | (tp->min << 5) | (tp->sec >> 1);
 	d = (tp->year <<  9) | (tp->mon << 5) |  tp->day;
+	ms = (tp->sec & 0x0001) * 100 + (tp->msec / 10);
 
 	switch (mode) {
 	case TM_CREATE:
 		SET16_A(ep->create_time, t);
 		SET16_A(ep->create_date, d);
+		ep->create_time_ms = ms;
 		break;
 	case TM_MODIFY:
 		SET16_A(ep->modify_time, t);
@@ -2811,23 +2839,32 @@ void fat_set_entry_time(DENTRY_T *p_entry, TIMESTAMP_T *tp, u8 mode)
 void exfat_set_entry_time(DENTRY_T *p_entry, TIMESTAMP_T *tp, u8 mode)
 {
 	u16 t, d;
+	u8 ms;
+	u8 tzmin;
 	FILE_DENTRY_T *ep = (FILE_DENTRY_T *) p_entry;
 
 	t = (tp->hour << 11) | (tp->min << 5) | (tp->sec >> 1);
 	d = (tp->year <<  9) | (tp->mon << 5) |  tp->day;
+	ms = (tp->sec & 0x0001) * 100 + (tp->msec / 10);
+	tzmin = ((uint8_t)(tp->tzmin / 15 * 2) >> 1) | 0x80;
 
 	switch (mode) {
 	case TM_CREATE:
 		SET16_A(ep->create_time, t);
 		SET16_A(ep->create_date, d);
+		ep->create_time_ms = ms;
+		ep->create_offset_15min = tzmin;
 		break;
 	case TM_MODIFY:
 		SET16_A(ep->modify_time, t);
 		SET16_A(ep->modify_date, d);
+		ep->modify_time_ms = ms;
+		ep->modify_offset_15min = tzmin;
 		break;
 	case TM_ACCESS:
 		SET16_A(ep->access_time, t);
 		SET16_A(ep->access_date, d);
+		ep->access_offset_15min = tzmin;
 		break;
 	}
 } /* end of exfat_set_entry_time */
@@ -2971,7 +3008,6 @@ void init_dos_entry(DOS_DENTRY_T *ep, u32 type, u32 start_clu)
 	fat_set_entry_time((DENTRY_T *) ep, tp, TM_CREATE);
 	fat_set_entry_time((DENTRY_T *) ep, tp, TM_MODIFY);
 	SET16_A(ep->access_date, 0);
-	ep->create_time_ms = 0;
 } /* end of init_dos_entry */
 
 void init_ext_entry(EXT_DENTRY_T *ep, s32 order, u8 chksum, u16 *uniname)
@@ -3032,9 +3068,6 @@ void init_file_entry(FILE_DENTRY_T *ep, u32 type)
 	exfat_set_entry_time((DENTRY_T *) ep, tp, TM_CREATE);
 	exfat_set_entry_time((DENTRY_T *) ep, tp, TM_MODIFY);
 	exfat_set_entry_time((DENTRY_T *) ep, tp, TM_ACCESS);
-	ep->create_time_ms = 0;
-	ep->modify_time_ms = 0;
-	ep->access_time_ms = 0;
 } /* end of init_file_entry */
 
 void init_strm_entry(STRM_DENTRY_T *ep, u8 flags, u32 start_clu, u64 size)
