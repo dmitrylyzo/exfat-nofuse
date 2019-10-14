@@ -2846,7 +2846,8 @@ void exfat_set_entry_time(DENTRY_T *p_entry, TIMESTAMP_T *tp, u8 mode)
 	t = (tp->hour << 11) | (tp->min << 5) | (tp->sec >> 1);
 	d = (tp->year <<  9) | (tp->mon << 5) |  tp->day;
 	ms = (tp->sec & 0x0001) * 100 + (tp->msec / 10);
-	tzmin = ((uint8_t)(tp->tzmin / 15 * 2) >> 1) | 0x80;
+	/* Due to the representation of negative values, there is no need to double and shift */
+	tzmin = (uint8_t)(tp->tzmin / 15) | 0x80;
 
 	switch (mode) {
 	case TM_CREATE:
